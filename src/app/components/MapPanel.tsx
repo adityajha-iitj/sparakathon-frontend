@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { apiClient } from '../utils/api';
+import { useRouter } from 'next/navigation';
 
 // Fix for default markers in react-leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -92,6 +93,7 @@ interface Route {
 }
 
 export default function SupplyChainSimulator(){
+  const router = useRouter();
   const [selectedStore, setSelectedStore] = useState<string>('');
   const [showRoutes, setShowRoutes] = useState(true);
   const [systemActive, setSystemActive] = useState(true);
@@ -263,6 +265,11 @@ export default function SupplyChainSimulator(){
     return () => clearInterval(interval);
   }, []);
 
+    // Add this function to handle store marker clicks
+  const handleStoreMarkerClick = (store: Store) => {
+    router.push(`/store/${store._id}`);
+  };
+
 
   const currentStore: Store | undefined = stores[selectedStore];
 
@@ -403,7 +410,7 @@ export default function SupplyChainSimulator(){
                   attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 />
                 {/* Store Markers: Only show if latitude and longitude are valid */}
-                {Object.values(stores)
+                  {Object.values(stores)
                   .filter((store: Store) => typeof store.latitude === 'number' && typeof store.longitude === 'number')
                   .map((store: Store) => (
                     <Marker
@@ -411,14 +418,31 @@ export default function SupplyChainSimulator(){
                       position={[store.latitude!, store.longitude!]}
                       icon={storeIcon}
                       eventHandlers={{
-                        click: () => setSelectedStore(store._id),
+                        click: () => {
+                          // Optional: Keep the selection for the control panel
+                          setSelectedStore(store._id);
+                          // Navigate to store config page
+                          handleStoreMarkerClick(store);
+                        },
                       }}
                     >
                       <Popup>
-                        <div>
-                          <h3 className="font-semibold">{store.store_name}</h3>
-                          <p>{store.store_address}</p>
-                          <p>Type: {store.store_type}</p>
+                        <div className="text-center">
+                          <h3 className="font-semibold mb-2">{store.store_name}</h3>
+                          <p className="text-sm text-gray-600 mb-1">{store.store_address}</p>
+                          <p className="text-sm text-gray-600 mb-3">Type: {store.store_type}</p>
+                          <p className="text-xs text-gray-500 mb-3">
+                            Inventory: {store.inventory}% | Priority: {store.priority}
+                          </p>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation(); // Prevent marker click event
+                              handleStoreMarkerClick(store);
+                            }}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                          >
+                            Configure Store
+                          </button>
                         </div>
                       </Popup>
                     </Marker>
@@ -440,7 +464,7 @@ export default function SupplyChainSimulator(){
           </div>
 
           {/* Control Panel */}
-          <div className="lg:col-span-1">
+                    <div className="lg:col-span-1">
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
             <div className="p-4 bg-gray-50 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-900">Configure {currentStore?.store_name}</h2>
@@ -454,81 +478,15 @@ export default function SupplyChainSimulator(){
               
               <div className="p-6 space-y-6">
                 
-                {/* Reorder Threshold */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Reorder Threshold: {currentStore.reorderThreshold}%
-                  </label>
-                  <input
-                    type="range"
-                    min="10"
-                    max="50"
-                    value={currentStore.reorderThreshold}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateStoreConfig('reorderThreshold', parseInt(e.target.value))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Order more when inventory drops below this level
-                  </p>
-                </div>
+                {/* ... keep all your existing configuration controls ... */}
 
-                {/* Maximum Inventory */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Maximum Inventory: {currentStore.maxInventory}
-                  </label>
-                  <input
-                    type="range"
-                    min="50"
-                    max="200"
-                    value={currentStore.maxInventory}
-                    onChange={(e) => updateStoreConfig('maxInventory', parseInt(e.target.value))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Never exceed this inventory level
-                  </p>
-                </div>
-
-                {/* Safety Stock */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Safety Stock: {currentStore.safetyStock}
-                  </label>
-                  <input
-                    type="range"
-                    min="10"
-                    max="50"
-                    value={currentStore.safetyStock}
-                    onChange={(e) => updateStoreConfig('safetyStock', parseInt(e.target.value))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Minimum stock to keep as backup
-                  </p>
-                </div>
-
-                {/* Priority */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Priority Level
-                  </label>
-                  <select
-                    value={currentStore.priority}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateStoreConfig('priority', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-700"
-                  >
-                    <option value="Low">Low</option>
-                    <option value="Medium">Medium</option>
-                    <option value="High">High</option>
-                    <option value="Critical">Critical</option>
-                  </select>
-                </div>
-
-                {/* Action Buttons */}
+                {/* Updated Action Buttons */}
                 <div className="pt-4 border-t border-gray-200">
-                  <button className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors font-medium mb-2">
-                    Start AI Simulation
+                  <button 
+                    onClick={() => handleStoreMarkerClick(currentStore)}
+                    className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors font-medium mb-2"
+                  >
+                    Open Store Configuration
                   </button>
                   <button className="w-full bg-gray-600 text-white py-2 px-4 rounded-lg hover:bg-gray-700 transition-colors font-medium">
                     Reset Configuration
