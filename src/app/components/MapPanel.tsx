@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
+import { apiClient } from '../utils/api';
 
 // Fix for default markers in react-leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -39,16 +40,43 @@ const warehouseIcon = new L.Icon({
   shadowSize: [41, 41]
 });
 
+interface StoreItem {
+  item_name: string;
+  current_quantity: number;
+  max_quantity: number;
+  unit: string;
+  price: number;
+  category: string;
+}
+
 interface Store {
-  id: string;
-  name: string;
-  position: [number, number];
-  inventory: number;
-  demand: string;
-  reorderThreshold: number;
-  maxInventory: number;
-  safetyStock: number;
-  priority: 'Low' | 'Medium' | 'High' | 'Critical';
+  _id: string;
+  store_name: string;
+  store_address: string;
+  store_phone: string;
+  store_email: string;
+  owner_name: string;
+  store_type: string;
+  items: StoreItem[];
+  is_active: boolean;
+  economic_conditions: 'LOW' | 'MEDIUM' | 'HIGH';
+  economic_notes: string;
+  political_instability: 'LOW' | 'MEDIUM' | 'HIGH';
+  political_notes: string;
+  environmental_issues: 'LOW' | 'MEDIUM' | 'HIGH';
+  environmental_notes: string;
+  created_at: string;
+  updated_at: string;
+  latitude?: number;
+  longitude?: number;
+  // UI-specific properties (we'll add these for display)
+  position?: [number, number];
+  inventory?: number;
+  demand?: string;
+  reorderThreshold?: number;
+  maxInventory?: number;
+  safetyStock?: number;
+  priority?: 'Low' | 'Medium' | 'High' | 'Critical';
 }
 
 interface Vehicle {
@@ -64,57 +92,16 @@ interface Route {
 }
 
 export default function SupplyChainSimulator(){
-  const [selectedStore, setSelectedStore] = useState('A');
+  const [selectedStore, setSelectedStore] = useState<string>('');
   const [showRoutes, setShowRoutes] = useState(true);
   const [systemActive, setSystemActive] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [pendingOrders, setPendingOrders] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
 
   // Store data with configurations
-  const [stores, setStores] = useState<Record<string, Store>>({
-    A: {
-      id: 'A',
-      name: 'Store A',
-      position: [28.6139, 77.2090], // Delhi
-      inventory: 75,
-      demand: 'High',
-      reorderThreshold: 25,
-      maxInventory: 150,
-      safetyStock: 30,
-      priority: 'High'
-    },
-    B: {
-      id: 'B', 
-      name: 'Store B',
-      position: [28.5355, 77.3910], // Noida
-      inventory: 40,
-      demand: 'Medium',
-      reorderThreshold: 30,
-      maxInventory: 100,
-      safetyStock: 20,
-      priority: 'Medium'
-    },
-    C: {
-      id: 'C',
-      name: 'Store C', 
-      position: [28.4595, 77.0266], // Gurgaon
-      inventory: 90,
-      demand: 'Low',
-      reorderThreshold: 35,
-      maxInventory: 120,
-      safetyStock: 25,
-      priority: 'Low'
-    },
-    D: {
-      id: 'D',
-      name: 'Main Warehouse',
-      position: [28.7041, 77.1025], // North Delhi
-      inventory: 500,
-      demand: 'N/A',
-      reorderThreshold: 50,
-      maxInventory: 1000,
-      safetyStock: 100,
-      priority: 'Critical'
-    }
-  });
+  const [stores, setStores] = useState<Record<string, Store>>({});
 
   const [vehicles] = useState<Vehicle[]>([
     { id: 1, position: [28.6500, 77.2500], status: 'En Route', destination: 'Store A' }
@@ -134,9 +121,197 @@ export default function SupplyChainSimulator(){
     }));
   };
 
-  const currentStore: Store = stores[selectedStore];
+    // Fetch stores from API
+  const fetchStores = async () => {
+    try {
+      setError(null);
+      setLoading(true);
+      const data = await apiClient.get('/stores/');
+      
+      // Transform API data to match your Store interface
+      const transformedStores: Record<string, Store> = {};
+      
+      data.stores.forEach((store: any) => {
+        // Calculate inventory percentage based on items
+        const totalCurrentQuantity = store.items.reduce((sum: number, item: StoreItem) => 
+          sum + item.current_quantity, 0);
+        const totalMaxQuantity = store.items.reduce((sum: number, item: StoreItem) => 
+          sum + item.max_quantity, 0);
+        const inventoryPercentage = totalMaxQuantity > 0 ? 
+          Math.round((totalCurrentQuantity / totalMaxQuantity) * 100) : 0;
 
+        // Determine demand based on economic conditions
+        const getDemand = (economicConditions: string) => {
+          switch (economicConditions) {
+            case 'HIGH': return 'High';
+            case 'MEDIUM': return 'Medium';
+            case 'LOW': return 'Low';
+            default: return 'Medium';
+          }
+        };
+
+        // Determine priority based on conditions
+        const getPriority = (store: any) => {
+          if (store.economic_conditions === 'HIGH' || 
+              store.political_instability === 'HIGH' || 
+              store.environmental_issues === 'HIGH') {
+            return 'Critical';
+          } else if (store.economic_conditions === 'MEDIUM' || 
+                     store.political_instability === 'MEDIUM' || 
+                     store.environmental_issues === 'MEDIUM') {
+            return 'High';
+          } else {
+            return 'Low';
+          }
+        };
+
+        // Assign positions based on store name (you can customize this)
+        const getPosition = (storeName: string) => {
+          const positions: Record<string, [number, number]> = {
+            'Store A': [28.6139, 77.2090], // Delhi
+            'Store B': [28.5355, 77.3910], // Noida
+            'Store C': [28.4595, 77.0266], // Gurgaon
+            'Main Warehouse': [28.7041, 77.1025], // North Delhi
+          };
+          return positions[storeName] || [28.6139, 77.2090]; // Default position
+        };
+
+        transformedStores[store._id] = {
+          ...store,
+          position: getPosition(store.store_name),
+          inventory: inventoryPercentage,
+          demand: getDemand(store.economic_conditions),
+          reorderThreshold: 25, // Default value
+          maxInventory: totalMaxQuantity,
+          safetyStock: Math.round(totalMaxQuantity * 0.2), // 20% of max as safety stock
+          priority: getPriority(store)
+        };
+      });
+      
+      setStores(transformedStores);
+      
+      // Set first store as selected if none selected
+      if (!selectedStore && data.stores.length > 0) {
+        setSelectedStore(data.stores[0]._id);
+      }
+    } catch (error) {
+      console.error('Error fetching stores:', error);
+      setError('Failed to load stores. Please check your connection.');
+
+      // Fallback to some default data if API fails
+      const fallbackStore: Store = {
+        _id: 'fallback',
+        store_name: 'Store A',
+        store_address: '123 Main St, New York, NY 10001',
+        store_phone: '+1-555-0123',
+        store_email: 'storea@example.com',
+        owner_name: 'John Doe',
+        store_type: 'General',
+        items: [],
+        is_active: true,
+        economic_conditions: 'MEDIUM',
+        economic_notes: 'Moderate inflation affecting prices',
+        political_instability: 'LOW',
+        political_notes: 'Stable political environment',
+        environmental_issues: 'LOW',
+        environmental_notes: 'No significant environmental concerns',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        position: [28.6139, 77.2090],
+        inventory: 75,
+        demand: 'High',
+        reorderThreshold: 25,
+        maxInventory: 150,
+        safetyStock: 30,
+        priority: 'High'
+      };
+      
+      setStores({ 'fallback': fallbackStore });
+      setSelectedStore('fallback');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+    // Fetch pending orders count
+  const fetchPendingOrders = async () => {
+    try {
+      const data = await apiClient.get('/orders/');
+      const pendingCount = data.orders.filter((order: any) => 
+        order.status === 'pending' || order.status === 'processing'
+      ).length;
+      setPendingOrders(pendingCount);
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      setPendingOrders(0); // Fallback
+    }
+  };
+
+  // Load data on component mount
+  useEffect(() => {
+    fetchStores();
+    fetchPendingOrders();
+  }, []);
+
+  // Refresh data every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchStores();
+      fetchPendingOrders();
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+
+  const currentStore: Store | undefined = stores[selectedStore];
+
+    // Show loading state
+  if (loading && Object.keys(stores).length === 0) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading supply chain data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentStore) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-red-600 text-xl mb-4">⚠️</div>
+          <p className="text-gray-600 mb-4">No store data available</p>
+          <button 
+            onClick={fetchStores}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
   return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
+      <div className="text-center">
+        <div className="text-red-600 text-xl mb-4">⚠️</div>
+        <p className="text-gray-600 mb-4">{error}</p>
+        <button 
+          onClick={fetchStores}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+        >
+          Retry
+        </button>
+      </div>
+    </div>
+  );
+}
+    return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 font-[family-name:var(--font-inter)]">
 
     {/* Updated System Status Panel as Cards */}
@@ -218,84 +393,37 @@ export default function SupplyChainSimulator(){
                 </div>
               <div className="h-96 lg:h-[500px]">
                 <MapContainer
-                  center={[28.6139, 77.2090]}
-                  zoom={11}
-                  style={{ height: '100%', width: '100%' }}
-                  className="leaflet-container"
-                >
-                  <TileLayer
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                  />
-                  
-                  {/* Store Markers */}
-                  {Object.values(stores).map((store) => (
+                center={[currentStore.latitude!, currentStore.longitude!]}
+                zoom={12}
+                style={{ height: '100%', width: '100%' }}
+                className="leaflet-container"
+              >
+                <TileLayer
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                />
+                {/* Store Markers: Only show if latitude and longitude are valid */}
+                {Object.values(stores)
+                  .filter((store: Store) => typeof store.latitude === 'number' && typeof store.longitude === 'number')
+                  .map((store: Store) => (
                     <Marker
-                      key={store.id}
-                      position={store.position}
+                      key={store._id}
+                      position={[store.latitude!, store.longitude!]}
                       icon={storeIcon}
                       eventHandlers={{
-                        click: () => setSelectedStore(store.id),
+                        click: () => setSelectedStore(store._id),
                       }}
                     >
                       <Popup>
-                        <div className="p-2">
-                          <h3 className="font-semibold">{store.name}</h3>
-                          <p className="text-sm">Inventory: {store.inventory}%</p>
-                          <p className="text-sm">Demand: {store.demand}</p>
-                          <button
-                            onClick={() => setSelectedStore(store.id)}
-                            className="mt-2 px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700"
-                          >
-                            Configure
-                          </button>
+                        <div>
+                          <h3 className="font-semibold">{store.store_name}</h3>
+                          <p>{store.store_address}</p>
+                          <p>Type: {store.store_type}</p>
                         </div>
                       </Popup>
                     </Marker>
                   ))}
-
-                  {/* Vehicle Markers */}
-                  {vehicles.map((vehicle) => (
-                    <Marker
-                      key={vehicle.id}
-                      position={vehicle.position}
-                      icon={vehicleIcon}
-                    >
-                      <Popup>
-                        <div className="p-2">
-                          <h3 className="font-semibold">Vehicle {vehicle.id}</h3>
-                          <p className="text-sm">Status: {vehicle.status}</p>
-                          <p className="text-sm">Destination: {vehicle.destination}</p>
-                        </div>
-                      </Popup>
-                    </Marker>
-                  ))}
-
-                  {/* Routes */}
-                  {showRoutes && routes.map((route, index) => (
-                    <Polyline
-                      key={index}
-                      positions={[route.from, route.to]}
-                      color="blue"
-                      weight={3}
-                      opacity={0.7}
-                      dashArray="10, 10"
-                    />
-                  ))}
-
-                  <Marker
-                    position={[28.7041, 77.1025]} // Adjust if needed
-                    icon={warehouseIcon}
-                  >
-                    <Popup>
-                      <div className="p-2">
-                        <h3 className="font-semibold">Main Warehouse</h3>
-                        <p className="text-sm">Central Supply Hub</p>
-                      </div>
-                    </Popup>
-                </Marker>
-
-                </MapContainer>
+              </MapContainer>
               </div>
                 <div className="px-4 py-2 bg-white border-t border-gray-200 text-sm text-gray-600 flex flex-wrap items-center justify-center gap-4">
                     <div className="flex justify-center items-center gap-1">
@@ -314,12 +442,15 @@ export default function SupplyChainSimulator(){
           {/* Control Panel */}
           <div className="lg:col-span-1">
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
-              <div className="p-4 bg-gray-50 border-b border-gray-200">
-                <h2 className="text-lg font-semibold text-gray-900">Configure {currentStore.name}</h2>
-                <p className="text-sm text-gray-600 mt-1">
-                  Current Inventory: {currentStore.inventory}% | Demand: {currentStore.demand}
-                </p>
-              </div>
+            <div className="p-4 bg-gray-50 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Configure {currentStore?.store_name}</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Current Inventory: {currentStore?.inventory}% | Demand: {currentStore?.demand}
+              </p>
+              <p className="text-xs text-gray-500">
+                Address: {currentStore?.store_address}
+              </p>
+            </div>
               
               <div className="p-6 space-y-6">
                 
@@ -392,28 +523,6 @@ export default function SupplyChainSimulator(){
                     <option value="High">High</option>
                     <option value="Critical">Critical</option>
                   </select>
-                </div>
-
-                {/* Store Selection */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Store
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {Object.values(stores).map((store) => (
-                      <button
-                        key={store.id}
-                        onClick={() => setSelectedStore(store.id)}
-                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                          selectedStore === store.id
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                        }`}
-                      >
-                        {store.name}
-                      </button>
-                    ))}
-                  </div>
                 </div>
 
                 {/* Action Buttons */}
